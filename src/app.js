@@ -107,13 +107,24 @@ var FSHADER_SOURCE = `
       if(u_ClickedIndex == u_ObjectIndex){
         vec3 highlight = vec3(0.15, 0.15, 0.15);
         gl_FragColor = vec4(vec3(gl_FragColor) + highlight, 1.0); 
-      }
+      } 
       if(u_AlphaMode == 1.0){
         gl_FragColor = vec4(vec3(gl_FragColor), u_ObjectIndex/255.0);
       }
     }
     
 `;
+
+var MouseDownLocation;
+var ClickedDown = false;
+var ClickedIndex;
+var Mesh = [];
+var ModelMatrix = [];
+var Far = 400;
+var PastTranslation = [];
+var CurrentTranslation = [];
+var CurrentRotation = [];
+var PastTranslation = [];
 
 function main(){
     var canvas = document.getElementById('webgl');
@@ -130,55 +141,89 @@ function main(){
         console.log('Failed to intialize shaders.');
         return;
     }
-    setClickedIndex(gl, -1);
+    Mesh.push(new OBJ.Mesh(document.getElementById('objTeapot').innerHTML));
+    setClickedIndex(gl, -1); //no clicked index
     setLights(gl);
     setDefaultMvpMatrix(gl, canvas);
-    setShader(gl, 2);
+    setShader(gl, 1);
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.enable(gl.DEPTH_TEST);
     render(gl);
+    
+    //Event handling
+    canvas.onmousedown = function(ev){
+        if(ev.button == 0){
+            leftClickDown(ev, gl, canvas);
+        }else if(ev.button == 1){
+            rightClickDown(ev, gl, canvas);
+        }
+    }
+    canvas.onmousemove = function(ev){
+        mouseMove(ev, gl, canvas);
+    }
+    canvas.onmouseup = function(ev){
+        if(ev.button == 0){
+            leftClickUp(ev, canvas, gl);
+        }else if(ev.button == 1){
+            // rightClickDown(gl, ev);
+        }
+    }
 
+    
+
+}
+function leftClickDown(ev, gl, canvas){
+    ClickedDown = true;
+    console.log("Left Click Down");
+    MouseDownLocation = getCanvasCoordinates(ev, canvas);
+    //Select object
+    let pixels = getPixels(gl, ev, canvas, false); //Do not need to rerender since we will anyways
+    console.log(pixels);
+    if(pixels[3] != 255){
+        setClickedIndex(gl, pixels[3]);
+    }else{
+        setClickedIndex(gl, -1); //No object clicked
+    }
+    render(gl);
+
+
+}
+function leftClickUp(ev, gl,  canvas){
+    console.log("Left Click Up!");
+    ClickedDown = false;
+}
+function rightClickDown(ev, gl,  canvas){
+
+}
+function mouseMove(ev, gl,  canvas){
+    if(ClickedDown){
+        let translateRatio = 100;
+        let change = getMouseChange(ev, canvas);
+        //console.log(change);
+        var mvpMatrix = createDefaultMatrix();
+        mvpMatrix.translate(change[0] * translateRatio, change[1] * translateRatio, 0);
+        setMvpMatrix(gl, mvpMatrix);
+        render(gl);
+        CurrentTranslation = change;
+    }
 }
 function render(gl){
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    var teaPot = document.getElementById('objTeapot').innerHTML;
+    for(let i = 0; i < Mesh.length; i++){
+        setObjectIndex(gl, i);
+        renderMesh(gl, Mesh[i]);
+    }
+}
+function renderMesh(gl, mesh){
+    console.log("Mesh:");
+    console.log(mesh);
 
-    let teaPotMesh = new OBJ.Mesh(teaPot);
-    console.log("Teapot Mesh:");
-    console.log(teaPotMesh);
-
-    OBJ.initMeshBuffers(gl, teaPotMesh);
-
-    var a_Position = gl.getAttribLocation(gl.program, 'a_Position');
-    var a_Normal = gl.getAttribLocation(gl.program, 'a_Normal');
-    var a_Color = gl.getAttribLocation(gl.program, 'a_Color');
-
-    console.log(a_Position);
-    console.log(a_Normal);
-    console.log(a_Color);
-
-    // gl.bindBuffer(gl.ARRAY_BUFFER, teaPotMesh.vertexBuffer);
-    // gl.vertexAttribPointer(a_Position, teaPotMesh.vertexBuffer.itemSize, gl.FLOAT, false, 0, 0);
-
-    // gl.bindBuffer(gl.ARRAY_BUFFER, teaPotMesh.normalBuffer);
-    // gl.vertexAttribPointer(a_Normal, teaPotMesh.normalBuffer.itemSize, gl.FLOAT, false, 0, 0);
-
-    // var color = new Vector3([0.0, 1.0, 0.0]);
-    // var colorBuff = makeSolidColorBuffer(color, teaPotMesh.vertexBuffer.numItems);
-    // if (!initArrayBuffer(gl, new Float32Array(colorBuff), 3, gl.FLOAT, 'a_Color')){
-    //     console.log('Failed to init color buffer');
-    //     return -1;
-    // }
-
-
-    // gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, teaPotMesh.indexBuffer);
-
-    // gl.drawElements(gl.TRIANGLES, teaPotMesh.indexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
+    OBJ.initMeshBuffers(gl, mesh);
     var color = new Vector3([1, 0, 0]);
-    var colors = makeSolidColorBuffer(color, teaPotMesh.vertices.length);
-    var vertices = teaPotMesh.vertices;
-    var normals = teaPotMesh.vertexNormals;
-    var indices = teaPotMesh.indices;
+    var colors = makeSolidColorBuffer(color, mesh.vertices.length);
+    var vertices = mesh.vertices;
+    var normals = mesh.vertexNormals;
+    var indices = mesh.indices;
     var indexBuffer = gl.createBuffer();
     if (!indexBuffer) 
         return -1;
@@ -198,8 +243,20 @@ function render(gl){
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
     gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+}
+function getPixels(gl, ev, canvas, rerender=true){
+    let pixels = new Uint8Array(4);
+    let intCoords = getCanvasCoordinatesInt(ev, canvas);
+    setAlphaMode(gl, 1.0);
 
-
+    render(gl);
+    gl.readPixels(intCoords[0], intCoords[1], 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    console.log('RGB clicked: (' + pixels[0] + ', ' + pixels[1] + ', ' + pixels[2] + ')');
+    setAlphaMode(gl, 0.0);
+    if(rerender){
+        render(gl);
+    }
+    return pixels;
 }
 
 function initArrayBuffer(gl, data, num, type, attribute) {
@@ -223,6 +280,27 @@ function initArrayBuffer(gl, data, num, type, attribute) {
   
     return true;
 }
+function getMouseChange(ev, canvas){
+    var current = getCanvasCoordinates(ev, canvas);
+    return [current[0] - MouseDownLocation[0], current[1] - MouseDownLocation[1]];
+}
+function getCanvasCoordinatesInt(ev, canvas){
+    let x = ev.clientX;
+    let y = ev.clientY;
+    let rect = ev.target.getBoundingClientRect();
+    x = (x - rect.left);
+    y = (rect.bottom - y);
+    return [x, y];
+  }
+  function getCanvasCoordinates(ev, canvas){
+    var x = ev.clientX; // x coordinate of a mouse pointer
+    var y = ev.clientY; // y coordinate of a mouse pointer
+    var rect = ev.target.getBoundingClientRect() ;
+  
+    x = ((x - rect.left) - canvas.width/2)/(canvas.width/2);
+    y = (canvas.height/2 - (y - rect.top))/(canvas.height/2);
+    return [x, y];
+  }
 
 function makeSolidColorBuffer(color, length){
     let colorArr = color.elements;
@@ -284,29 +362,48 @@ function makeSolidColorBuffer(color, length){
       console.log('Failed to get the storage location of u_MvpMatrix');
       return;
     }
-  //   // Set the eye point and the viewing volume
-    var mvpMatrix = new Matrix4();
-  //   mvpMatrix.setTranslate(0.5, 0, 0);
-  //   var orthoMatrix = new Matrix4();
-  //   orthoMatrix.setOrtho(-1, 1, -1, 1, 1, -1);
-  //   mvpMatrix.multiply(orthoMatrix);
-    mvpMatrix.setPerspective(30, canvas.width/canvas.height, 1, 400);
-    mvpMatrix.lookAt(0, 0, 370, 0, 0, 0, 0, 1, 0);
+    //Set the eye point and the viewing volume
+    
+    //mvpMatrix.translate(100, 0, 0);
+    // var mvpMatrix = new Matrix4();
+
+    // mvpMatrix.setPerspective(30, canvas.width/canvas.height, 1, 600);
+    // mvpMatrix.lookAt(0, 50, Far, 0, 0, 0, 0, 1, 0);
+    var mvpMatrix = createDefaultMatrix();
+
   
     // Pass the model view projection matrix to u_MvpMatrix
     gl.uniformMatrix4fv(u_MvpMatrix, false, mvpMatrix.elements);
   }
-  function setMvpMatrix(gl, eyePosition, center, up, near, far, viewAngle, ratio=1){
+  //Makes default view matrix
+  function createDefaultMatrix(){
+    var eye = new Vector3([0, 50, Far]);
+    var center = new Vector3([0, 0, 0]);
+    var up = new Vector3([0, 1, 0]);
+    var near = 1;
+    var far = Far + 200;
+    var viewAngle = 30;
+
+    var mvpMatrix = createVpMatrix(eye, center, up, near, far, viewAngle);
+    return mvpMatrix;
+  }
+  function createVpMatrix(eyePosition, center, up, near, far, viewAngle, ratio=1){
     var mvpMatrix = new Matrix4();
-    var u_MvpMatrix = gl.getUniformLocation(gl.program, 'u_MvpMatrix');
+    //var u_MvpMatrix = gl.getUniformLocation(gl.program, 'u_MvpMatrix');
     mvpMatrix.setPerspective(viewAngle, ratio, near, far);
     var eye = eyePosition.elements;
     var point = center.elements;
     var upVec = up.elements;
     mvpMatrix.lookAt(eye[0], eye[1], eye[2], point[0], point[1], point[2], upVec[0], upVec[1], upVec[2]);
     // Pass the model view projection matrix to u_MvpMatrix
-    gl.uniformMatrix4fv(u_MvpMatrix, false, mvpMatrix.elements);
+    //gl.uniformMatrix4fv(u_MvpMatrix, false, mvpMatrix.elements);
+    return mvpMatrix;
   }
+  function setMvpMatrix(gl, matrix){
+    var u_MvpMatrix = gl.getUniformLocation(gl.program, 'u_MvpMatrix');
+    gl.uniformMatrix4fv(u_MvpMatrix, false, matrix.elements);
+  }
+
   function setObjectIndex(gl, index){
     //Get uniform location
     var u_ObjectIndex = gl.getUniformLocation(gl.program, 'u_ObjectIndex');
@@ -321,6 +418,7 @@ function makeSolidColorBuffer(color, length){
     gl.uniform1f(u_AlphaMode, alpha);
   }
   function setClickedIndex(gl, index){
+    ClickedIndex = index;
     var u_ClickedIndex = gl.getUniformLocation(gl.program, 'u_ClickedIndex');
     gl.uniform1f(u_ClickedIndex, index);
   }
