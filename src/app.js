@@ -117,14 +117,17 @@ var FSHADER_SOURCE = `
 
 var MouseDownLocation;
 var ClickedDown = false;
+var RightClickedDown = false;
 var ClickedIndex;
 var Mesh = [];
 var ModelMatrix = [];
 var Far = 400;
 var PastTranslation = [];
-var CurrentTranslation = [];
-var CurrentRotation = [];
+var CurrentTranslation = [0, 0];
+var CurrentRotation = [0, 0];
 var PastTranslation = [];
+var CurrentScale = 1;
+var ScrollTranslation;
 
 function main(){
     var canvas = document.getElementById('webgl');
@@ -154,7 +157,7 @@ function main(){
     canvas.onmousedown = function(ev){
         if(ev.button == 0){
             leftClickDown(ev, gl, canvas);
-        }else if(ev.button == 1){
+        }else if(ev.button == 2){
             rightClickDown(ev, gl, canvas);
         }
     }
@@ -164,9 +167,14 @@ function main(){
     canvas.onmouseup = function(ev){
         if(ev.button == 0){
             leftClickUp(ev, canvas, gl);
-        }else if(ev.button == 1){
-            // rightClickDown(gl, ev);
+        }else if(ev.button == 2){
+            rightClickUp(ev, canvas, gl);
         }
+    }
+    canvas.onwheel = function(ev){
+        console.log("Scroll!");
+        console.log(ev);
+        scroll(ev, canvas, gl);
     }
 
     
@@ -193,19 +201,97 @@ function leftClickUp(ev, gl,  canvas){
     ClickedDown = false;
 }
 function rightClickDown(ev, gl,  canvas){
+    console.log("RightClick down!");
+    RightClickedDown = true;
+    MouseDownLocation = getCanvasCoordinates(ev, canvas);
 
 }
+function rightClickUp(ev, canvas, gl){
+    RightClickedDown = false;
+}
+function scroll(ev, canvas, gl){
+    let scaleRatio = 100;
+    console.log(ev.deltaY);
+    let movement = (ev.deltaY/Math.abs(ev.deltaY))/scaleRatio;
+    CurrentScale += movement;
+    var mvpMatrix = createDefaultMatrix();
+    mvpMatrix.multiply(createTransformMatrix());
+    setMvpMatrix(gl, mvpMatrix);
+    render(gl);
+}
 function mouseMove(ev, gl,  canvas){
-    if(ClickedDown){
-        let translateRatio = 100;
-        let change = getMouseChange(ev, canvas);
-        //console.log(change);
+    if(ClickedDown || RightClickedDown){
         var mvpMatrix = createDefaultMatrix();
-        mvpMatrix.translate(change[0] * translateRatio, change[1] * translateRatio, 0);
+        let change = getMouseChange(ev, canvas);
+        console.log("Change:");
+        console.log(change);
+     
+        if(ClickedDown){
+            CurrentTranslation = change;
+            // let translateRatio = 100;
+            // let clickTranslation = new Matrix4();
+            // clickTranslation.setTranslate(change[0] * translateRatio, change[1] * translateRatio, 0);
+            // //mvpMatrix.translate(change[0] * translateRatio, change[1] * translateRatio, 0);
+            // mvpMatrix.multiply(clickTranslation);
+            
+        }
+        if(RightClickedDown){
+            CurrentRotation = change;
+            // let degreeRatio = 360;
+            // //Do rotation
+            // let changeVector = new Vector3([change[0], change[1], 0]);
+            // console.log("Change vector:");
+            // console.log(changeVector);
+            // let normal = new Vector3([0, 0, 1]); //Z vector to get axis
+            // let mag = VectorLibrary.magnitude(changeVector);
+            // let axis = VectorLibrary.crossProduct(changeVector.normalize(), normal);
+            
+            // console.log("Magnitude: " + mag);
+            // let rotateMatrix = new Matrix4();
+            // rotateMatrix.setRotate(mag * degreeRatio, axis.elements[0], axis.elements[1], axis.elements[2]);
+            // mvpMatrix.multiply(rotateMatrix);
+        }
+        mvpMatrix.multiply(createTransformMatrix());
         setMvpMatrix(gl, mvpMatrix);
         render(gl);
-        CurrentTranslation = change;
     }
+    
+}
+function createTransformMatrix(){
+        var matrix = new Matrix4();
+        matrix.multiply(createClickTranslationMatrix());
+        matrix.multiply(createClickRotationMatrix());
+        matrix.scale(CurrentScale, CurrentScale, CurrentScale);
+        return matrix;
+}
+function createClickTranslationMatrix(){
+    let change = CurrentTranslation;
+    let translateRatio = 100;
+    let clickTranslation = new Matrix4();
+    clickTranslation.setTranslate(change[0] * translateRatio, change[1] * translateRatio, 0);
+            //mvpMatrix.translate(change[0] * translateRatio, change[1] * translateRatio, 0);
+            //mvpMatrix.multiply(clickTranslation);
+    return clickTranslation;
+}
+function createClickRotationMatrix(){
+    let change = CurrentRotation;
+    let rotateMatrix = new Matrix4();
+    if(change[0] == 0 && change[1] == 0){
+        return rotateMatrix;
+    }
+    let degreeRatio = 360;
+    //Do rotation
+    let changeVector = new Vector3([change[0], change[1], 0]);
+    console.log("Change vector:");
+    console.log(changeVector);
+    let normal = new Vector3([0, 0, 1]); //Z vector to get axis
+    let mag = VectorLibrary.magnitude(changeVector);
+    let axis = VectorLibrary.crossProduct(changeVector.normalize(), normal);
+            
+    console.log("Magnitude: " + mag);
+    
+    rotateMatrix.setRotate(mag * degreeRatio, axis.elements[0], axis.elements[1], axis.elements[2]);
+    return rotateMatrix;
 }
 function render(gl){
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -215,8 +301,8 @@ function render(gl){
     }
 }
 function renderMesh(gl, mesh){
-    console.log("Mesh:");
-    console.log(mesh);
+    // console.log("Mesh:");
+    // console.log(mesh);
 
     OBJ.initMeshBuffers(gl, mesh);
     var color = new Vector3([1, 0, 0]);
