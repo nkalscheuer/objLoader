@@ -52,6 +52,9 @@ var FSHADER_SOURCE = `
     uniform vec3 u_SpecularColor;
     uniform float u_SpecularExponent;
     uniform mat4 u_MvpMatrix;
+    uniform float u_ObjectIndex;
+    uniform float u_AlphaMode;
+    uniform float u_ClickedIndex;
     float celColor(in float colorVal){
       if(colorVal >= 1.0 ){
         return 1.0;
@@ -87,14 +90,12 @@ var FSHADER_SOURCE = `
       } else if (u_Shader == 2.0){
         //Cel Shading
         vec3 lightPosition = vec3(u_MvpMatrix * vec4(u_LightPosition, 1));
-        // vec3 lightPosition = vec3(vec4(u_LightPosition, 1));
-        // vec3 lightDirection = normalize(vec3(v_Position) - lightPosition);
         vec3 lightDirection = normalize(lightPosition - vec3(v_Position));
         float nDotL = max(dot(lightDirection, v_Normal), 0.0);
         vec3 diffuse = u_DiffuseColor * v_Color.rgb * nDotL;
         vec3 ambient = u_AmbientLight;
         vec3 reflectionVector = normalize(2.0 * nDotL * v_Normal - lightDirection);
-        vec3 orthoEyeVector = vec3(0.0, 0.0, 1.0);
+        vec3 orthoEyeVector = vec3(0.0, 0.0, -1.0);
         //vec3 specular = vec3(v_Color) * u_SpecularColor * pow(max(dot(reflectionVector, orthoEyeVector), 0.0), u_SpecularExponent);
         vec3 specular = u_SpecularColor * pow(max(dot(reflectionVector, orthoEyeVector), 0.0), u_SpecularExponent);
         vec4 resultColor = vec4(diffuse + ambient + specular, 1.0);
@@ -102,6 +103,13 @@ var FSHADER_SOURCE = `
         resultColor.g = celColor(resultColor.g);
         resultColor.b = celColor(resultColor.b);
         gl_FragColor = resultColor;
+      }
+      if(u_ClickedIndex == u_ObjectIndex){
+        vec3 highlight = vec3(0.15, 0.15, 0.15);
+        gl_FragColor = vec4(vec3(gl_FragColor) + highlight, 1.0); 
+      }
+      if(u_AlphaMode == 1.0){
+        gl_FragColor = vec4(vec3(gl_FragColor), u_ObjectIndex/255.0);
       }
     }
     
@@ -122,6 +130,7 @@ function main(){
         console.log('Failed to intialize shaders.');
         return;
     }
+    setClickedIndex(gl, -1);
     setLights(gl);
     setDefaultMvpMatrix(gl, canvas);
     setShader(gl, 2);
@@ -297,4 +306,21 @@ function makeSolidColorBuffer(color, length){
     mvpMatrix.lookAt(eye[0], eye[1], eye[2], point[0], point[1], point[2], upVec[0], upVec[1], upVec[2]);
     // Pass the model view projection matrix to u_MvpMatrix
     gl.uniformMatrix4fv(u_MvpMatrix, false, mvpMatrix.elements);
+  }
+  function setObjectIndex(gl, index){
+    //Get uniform location
+    var u_ObjectIndex = gl.getUniformLocation(gl.program, 'u_ObjectIndex');
+    //Set uniform value to index
+    gl.uniform1f(u_ObjectIndex, index);
+  }
+  function setAlphaMode(gl, alpha){
+    // console.log('Changing alpha mode to ' + alpha);
+    //Get uniform location
+    var u_AlphaMode = gl.getUniformLocation(gl.program, 'u_AlphaMode');
+    //Set uniform calue
+    gl.uniform1f(u_AlphaMode, alpha);
+  }
+  function setClickedIndex(gl, index){
+    var u_ClickedIndex = gl.getUniformLocation(gl.program, 'u_ClickedIndex');
+    gl.uniform1f(u_ClickedIndex, index);
   }
