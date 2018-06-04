@@ -16,16 +16,18 @@ uniform vec3 u_LightPosition;
 uniform vec3 u_AmbientLight;
 uniform vec3 u_SpecularColor;
 uniform float u_Shader;
+uniform mat4 u_VpMatrix;
 void main() {
   //Shared changes
   gl_Position = u_MvpMatrix * a_Position;
   gl_PointSize = a_PointSize;
   v_Normal = vec3(a_Normal);
+  //v_Normal = normalize(vec3(u_NormalMatrix * a_Normal));
   v_Position = u_MvpMatrix * a_Position;
   
   //Goraud shading
   if(u_Shader == 0.0){
-    vec3 lightPosition = vec3(u_MvpMatrix * vec4(u_LightPosition, 1));  
+    vec3 lightPosition = vec3(u_VpMatrix * vec4(u_LightPosition, 1));  
     vec3 lightDirection = normalize((lightPosition) - vec3(v_Position));
     float nDotL = max(dot(lightDirection, v_Normal), 0.0);
     vec3 diffuse = u_DiffuseColor * a_Color.rgb * nDotL;
@@ -55,6 +57,8 @@ var FSHADER_SOURCE = `
     uniform float u_ObjectIndex;
     uniform float u_AlphaMode;
     uniform float u_ClickedIndex;
+    uniform vec3 u_EyePosition;
+    uniform mat4 u_VpMatrix;
     float celColor(in float colorVal){
       if(colorVal >= 1.0 ){
         return 1.0;
@@ -72,24 +76,29 @@ var FSHADER_SOURCE = `
       return 0.0;
     }
     void main() {
+      //vec3 eyeVector = normalize(vec3(u_VpMatrix * vec4(u_EyePosition, 1) - v_Position));
+      vec3 eyePosition = vec3(u_VpMatrix * vec4(u_EyePosition, 1));
+      //vec3 eyeVector = normalize(vec3(vec4(eyePosition, 1) - v_Position));
+      vec3 eyeVector = normalize(vec3(vec4(u_EyePosition, 1) - v_Position));
       if(u_Shader == 0.0){
         //Goraud Shading
         gl_FragColor = v_Color;
       }else if(u_Shader == 1.0){
         //Phong Shading
-        vec3 lightPosition = vec3(u_MvpMatrix * vec4(u_LightPosition, 1));
+        vec3 lightPosition = vec3(u_VpMatrix * vec4(u_LightPosition, 1));
+        //vec3 lightPosition = u_LightPosition;
         vec3 lightDirection = normalize(lightPosition - vec3(v_Position));
         float nDotL = max(dot(lightDirection, v_Normal), 0.0);
         vec3 diffuse = u_DiffuseColor * v_Color.rgb * nDotL;
         vec3 ambient = u_AmbientLight;
         vec3 reflectionVector = normalize(2.0 * nDotL * v_Normal - lightDirection);
-        vec3 orthoEyeVector = vec3(0.0, 0.0, -1.0);
+        //vec3 orthoEyeVector = vec3(0.0, 0.0, -1.0);
         //vec3 specular = vec3(v_Color) * u_SpecularColor * pow(max(dot(reflectionVector, orthoEyeVector), 0.0), u_SpecularExponent);
-        vec3 specular = u_SpecularColor * pow(max(dot(reflectionVector, orthoEyeVector), 0.0), u_SpecularExponent);
+        vec3 specular = u_SpecularColor * pow(max(dot(reflectionVector, eyeVector), 0.0), u_SpecularExponent);
         gl_FragColor = vec4(diffuse + ambient + specular, v_Color.a);
       } else if (u_Shader == 2.0){
         //Cel Shading
-        vec3 lightPosition = vec3(u_MvpMatrix * vec4(u_LightPosition, 1));
+        vec3 lightPosition = vec3(u_VpMatrix * vec4(u_LightPosition, 1));
         vec3 lightDirection = normalize(lightPosition - vec3(v_Position));
         float nDotL = max(dot(lightDirection, v_Normal), 0.0);
         vec3 diffuse = u_DiffuseColor * v_Color.rgb * nDotL;
@@ -97,7 +106,7 @@ var FSHADER_SOURCE = `
         vec3 reflectionVector = normalize(2.0 * nDotL * v_Normal - lightDirection);
         vec3 orthoEyeVector = vec3(0.0, 0.0, -1.0);
         //vec3 specular = vec3(v_Color) * u_SpecularColor * pow(max(dot(reflectionVector, orthoEyeVector), 0.0), u_SpecularExponent);
-        vec3 specular = u_SpecularColor * pow(max(dot(reflectionVector, orthoEyeVector), 0.0), u_SpecularExponent);
+        vec3 specular = u_SpecularColor * pow(max(dot(reflectionVector, eyeVector), 0.0), u_SpecularExponent);
         vec4 resultColor = vec4(diffuse + ambient + specular, 1.0);
         resultColor.r = celColor(resultColor.r);
         resultColor.g = celColor(resultColor.g);
@@ -128,6 +137,17 @@ var CurrentRotation = [0, 0];
 var PastTranslation = [];
 var CurrentScale = 1;
 var ScrollTranslation;
+var EyePosition;
+var LookAt;
+var CameraUp;
+var PANVAL = 1;
+var CAMROTANGLE = 0.5;
+var ZOOMVAL = 0.3;
+var ViewAngle = 30;
+var ClearPanAnim = false;
+var ClearShakeAnim = false;
+var AspectRatio = 1.0;
+var RATIOCHANGE = 0.01;
 
 function main(){
     var canvas = document.getElementById('webgl');
@@ -144,6 +164,10 @@ function main(){
         console.log('Failed to intialize shaders.');
         return;
     }
+    EyePosition = new Vector3([0, 0, Far]);
+    LookAt = new Vector3([0, 0, 0]);
+    CameraUp = new Vector3([0, 1, 0]);
+    setEyePosition(gl, EyePosition);
     Mesh.push(new OBJ.Mesh(document.getElementById('objTeapot').innerHTML));
     setClickedIndex(gl, -1); //no clicked index
     setLights(gl);
@@ -177,6 +201,85 @@ function main(){
         scroll(ev, canvas, gl);
     }
 
+    document.onkeydown = function(ev){
+      switch (ev.key){
+        case "ArrowLeft":
+          // console.log("Arrow left!");
+          pan(gl, -PANVAL, 0, 0);
+          break;
+        case "ArrowRight":
+          // console.log("Arrow right!");
+          pan(gl, PANVAL, 0, 0);
+          break;
+        case "ArrowUp":
+          // console.log("Arrow up!");
+          pan(gl, 0, PANVAL, 0);
+          break;
+        case "ArrowDown":
+          // console.log("Arrow down");
+          pan(gl, 0, -PANVAL, 0);
+          break;
+        case "s":
+          pan(gl, 0, 0, PANVAL);
+          break;
+        case "w":
+          console.log("S pressed");
+          pan(gl, 0, 0, -PANVAL);
+          break;
+        case "a":
+          rotateCameraY(gl, CAMROTANGLE);
+          break;
+        case "d":
+          rotateCameraY(gl, -CAMROTANGLE);
+          break;
+        case '+':
+          // console.log("Zoom in called");
+          zoom(gl, -ZOOMVAL);
+          break;
+        case '-':
+          // console.log("Zoom out called");
+          zoom(gl, ZOOMVAL);
+          break;
+        case 'm':
+          rollCamera(gl, CAMROTANGLE);
+          break;
+        case 'n':
+          rollCamera(gl, -CAMROTANGLE);
+          break;
+        case 'j':
+          changeAspectRatio(gl, -RATIOCHANGE);
+          break;
+        case 'k':
+          changeAspectRatio(gl, RATIOCHANGE);
+          break;
+        
+      }
+      if(ev.key == '0'){
+        changeShader(gl, 0);
+      }else if(ev.key == '1'){
+        //
+        changeShader(gl, 1);
+      }else if(ev.key == '2'){
+        //
+        changeShader(gl, 2);
+      }
+    }
+
+    document.getElementById('panAnimate').onclick = function(ev){
+      ClearPanAnim = false;
+      animatePanAround(gl)
+    }
+    document.getElementById('clearPanAnimate').onclick = function(ev){
+      ClearPanAnim = true;
+    }
+    // animateShake(gl);
+    document.getElementById('shakeAnimate').onclick = function(ev){
+      ClearShakeAnim = false;
+      animateShake(gl);
+    }
+    document.getElementById('clearShakeAnimate').onclick = function(ev){
+      ClearShakeAnim = true;
+    }
     
 
 }
@@ -223,8 +326,8 @@ function mouseMove(ev, gl,  canvas){
     if(ClickedDown || RightClickedDown){
         var mvpMatrix = createDefaultMatrix();
         let change = getMouseChange(ev, canvas);
-        console.log("Change:");
-        console.log(change);
+        // console.log("Change:");
+        // console.log(change);
      
         if(ClickedDown){
             CurrentTranslation = change;
@@ -253,6 +356,7 @@ function mouseMove(ev, gl,  canvas){
         }
         mvpMatrix.multiply(createTransformMatrix());
         setMvpMatrix(gl, mvpMatrix);
+        setNormalMatrix(gl, createNormalMatrix(mvpMatrix));
         render(gl);
     }
     
@@ -282,16 +386,23 @@ function createClickRotationMatrix(){
     let degreeRatio = 360;
     //Do rotation
     let changeVector = new Vector3([change[0], change[1], 0]);
-    console.log("Change vector:");
-    console.log(changeVector);
+    // console.log("Change vector:");
+    // console.log(changeVector);
     let normal = new Vector3([0, 0, 1]); //Z vector to get axis
     let mag = VectorLibrary.magnitude(changeVector);
     let axis = VectorLibrary.crossProduct(changeVector.normalize(), normal);
             
-    console.log("Magnitude: " + mag);
+    // console.log("Magnitude: " + mag);
     
     rotateMatrix.setRotate(mag * degreeRatio, axis.elements[0], axis.elements[1], axis.elements[2]);
     return rotateMatrix;
+}
+function resetMatrix(gl){
+  var mvpMatrix = createDefaultMatrix();
+  setVpMatrix(gl, mvpMatrix);
+  setEyePosition(gl, EyePosition);
+  mvpMatrix.multiply(createTransformMatrix());
+  setMvpMatrix(gl, mvpMatrix);
 }
 function render(gl){
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -409,8 +520,8 @@ function makeSolidColorBuffer(color, length){
     gl.uniform3f(u_AmbientLight, 0.5, 0.0, 0.0);
 
     //Set specular exponent
-    setSpecularColor(gl, 0.8, 0.8, 0.8);
-    setSpecularExponent(gl, 20.0);
+    setSpecularColor(gl, 0.4, 0.4, 0.4);
+    setSpecularExponent(gl, 10.0);
   }
   function setDiffuse(gl, r, g, b){
     var u_DiffuseColor = gl.getUniformLocation(gl.program, 'u_DiffuseColor');
@@ -438,9 +549,10 @@ function makeSolidColorBuffer(color, length){
     var u_SpecularExponent = gl.getUniformLocation(gl.program, 'u_SpecularExponent');
     gl.uniform1f(u_SpecularExponent, exponent);
   }
-  function setEyeVector(gl, eyePosition){
-    var u_EyeVector = gl.getUniformLocation(gl.program, 'u_EyeVector');
-    gl.uniform3f(u_EyeVector, eyePosition);
+  function setEyePosition(gl, eyePosition){
+    EyePosition = eyePosition;
+    var u_EyePosition = gl.getUniformLocation(gl.program, 'u_EyePosition');
+    gl.uniform3fv(u_EyePosition, EyePosition.elements);
   }
   function setDefaultMvpMatrix(gl, canvas){
     var u_MvpMatrix = gl.getUniformLocation(gl.program, 'u_MvpMatrix');
@@ -460,17 +572,18 @@ function makeSolidColorBuffer(color, length){
   
     // Pass the model view projection matrix to u_MvpMatrix
     gl.uniformMatrix4fv(u_MvpMatrix, false, mvpMatrix.elements);
+    setVpMatrix(gl, mvpMatrix);
   }
   //Makes default view matrix
   function createDefaultMatrix(){
-    var eye = new Vector3([0, 50, Far]);
-    var center = new Vector3([0, 0, 0]);
-    var up = new Vector3([0, 1, 0]);
+    var eye = EyePosition;
+    var center = LookAt;
+    var up = CameraUp;
     var near = 1;
     var far = Far + 200;
-    var viewAngle = 30;
+    var viewAngle = ViewAngle;
 
-    var mvpMatrix = createVpMatrix(eye, center, up, near, far, viewAngle);
+    var mvpMatrix = createVpMatrix(eye, center, up, near, far, viewAngle, AspectRatio);
     return mvpMatrix;
   }
   function createVpMatrix(eyePosition, center, up, near, far, viewAngle, ratio=1){
@@ -485,9 +598,26 @@ function makeSolidColorBuffer(color, length){
     //gl.uniformMatrix4fv(u_MvpMatrix, false, mvpMatrix.elements);
     return mvpMatrix;
   }
+
+  function createNormalMatrix(mvpMatrix){
+    var inverse = new Matrix4();
+    inverse.setInverseOf(mvpMatrix);
+    inverse.transpose();
+    return inverse;
+  }
   function setMvpMatrix(gl, matrix){
     var u_MvpMatrix = gl.getUniformLocation(gl.program, 'u_MvpMatrix');
     gl.uniformMatrix4fv(u_MvpMatrix, false, matrix.elements);
+  }
+
+  function setVpMatrix(gl, matrix){
+    var u_VpMatrix = gl.getUniformLocation(gl.program, 'u_VpMatrix');
+    gl.uniformMatrix4fv(u_VpMatrix, false, matrix.elements);
+  }
+
+  function setNormalMatrix(gl, matrix){
+    var u_NormalMatrix = gl.getUniformLocation(gl.program, 'u_NormalMatrix');
+    gl.uniformMatrix4fv(u_NormalMatrix, false, matrix.elements);
   }
 
   function setObjectIndex(gl, index){
@@ -507,4 +637,162 @@ function makeSolidColorBuffer(color, length){
     ClickedIndex = index;
     var u_ClickedIndex = gl.getUniformLocation(gl.program, 'u_ClickedIndex');
     gl.uniform1f(u_ClickedIndex, index);
+  }
+  function pan(gl, x, y, z){
+    var translationMatrix = new Matrix4();
+    translationMatrix.setTranslate(x, y, z);
+
+    EyePosition = translationMatrix.multiplyVector3(EyePosition);
+    LookAt = translationMatrix.multiplyVector3(LookAt);
+    resetMatrix(gl);
+    render(gl);
+  }
+  function rotateCameraY(gl, angle){
+    rotateCamera(gl, angle, CameraUp);
+  }
+
+  function rotateCamera(gl, angle, vector){
+    //Get rotation matrix
+    var matrix = new Matrix4();
+    let v = vector.elements;
+    matrix.setRotate(angle, v[0], v[1], v[2]);
+
+    //Get eye vector
+    let lookAtVector = VectorLibrary.getVector(EyePosition, LookAt);
+
+    //Transform lookat Vector
+    let newLookAtVector = matrix.multiplyVector3(lookAtVector);
+
+    //Add new look at to eye to get new look at point
+    LookAt = VectorLibrary.translatePoint(EyePosition, newLookAtVector);
+
+    resetMatrix(gl);
+    render(gl);
+
+
+
+  }
+
+  function zoom(gl, zoomVal){
+    ViewAngle += zoomVal;
+    resetMatrix(gl);
+    render(gl);
+  }
+
+  function rollCamera(gl, angle){
+    let lookAtVector = VectorLibrary.getVector(EyePosition, LookAt);
+
+    //Making rotate matrix
+    let matrix = new Matrix4();
+    let l = lookAtVector.elements;
+    matrix.setRotate(angle, l[0], l[1], l[2]);
+
+    //Rotate upVector
+    CameraUp = matrix.multiplyVector3(CameraUp);
+    resetMatrix(gl);
+    render(gl);
+
+  }
+
+  function changeShader(gl, shader, rerender=true){
+    //Set shader
+    setShader(gl, shader);
+    //Change label
+    var shaderLabel = document.getElementById('shader');
+    if(shader == 0){
+      shaderLabel.innerHTML = "Goraud";
+    }else if(shader == 1){
+      shaderLabel.innerHTML = "Phong";
+    }else if(shader == 2){
+      shaderLabel.innerHTML = "Cel/Toon";
+    }
+    //Rerender
+    if(render){
+      render(gl);
+    }
+  }
+  function resetCameraPosition(gl){
+    EyePosition = new Vector3([0, 0, Far]);
+    LookAt = new Vector3([0, 0, 0]);
+    CameraUp = new Vector3([0, 1, 0]);
+    resetMatrix(gl);
+    render(gl);
+  }
+
+  function animatePanAround(gl){
+    console.log("Rendering!");
+    //resetCameraPosition(gl);
+
+    var rotateMatrix = new Matrix4();
+    let animateAngle = 0.5;
+
+    let u = CameraUp.elements;
+    rotateMatrix.setRotate(animateAngle, u[0], u[1], u[2]);
+
+
+    var id = setInterval(frame, 50);
+    
+
+    function frame(){
+      if(ClearPanAnim){
+        clearInterval(id);
+      }
+      console.log("Frame");
+      let radial = VectorLibrary.getVector(LookAt, EyePosition);
+      radial = rotateMatrix.multiplyVector3(radial);
+      EyePosition = VectorLibrary.translatePoint(LookAt, radial);
+      resetMatrix(gl);
+      render(gl);
+    }
+
+  }
+  function animateShake(gl){
+    resetCameraPosition(gl);
+
+    var center = EyePosition;
+
+    var maxMagnitude = 25;
+
+    var id = setInterval(frame, 100);
+
+
+    function frame(){
+      if(ClearShakeAnim){
+        resetCameraPosition(gl);
+        clearInterval(id);
+      }
+      let backToCenter = VectorLibrary.getVector(EyePosition, center);
+      let offMag = VectorLibrary.magnitude(backToCenter);
+      if(offMag > maxMagnitude){
+        //Move back to center
+        let scalar = Math.random();
+        let adjustVector = VectorLibrary.scaleVector(scalar, backToCenter);
+        EyePosition = VectorLibrary.translatePoint(EyePosition, backToCenter);
+      }else{
+        let x = 3 * randomSign() * Math.random();
+        let y = 3 * randomSign() * Math.random();
+        // let z = randomSign() * Math.random();
+        
+        let trans = new Vector3([x, y, 0]);
+
+        EyePosition = VectorLibrary.translatePoint(EyePosition, trans);
+      }
+      resetMatrix(gl);
+      render(gl);
+      
+    }
+
+  }
+  function randomSign(){
+    let x = Math.round(Math.random());
+    if(x == 0){
+      return -1;
+    }
+    return 1;
+  }
+
+  function changeAspectRatio(gl, change){
+    AspectRatio += change;
+    resetMatrix(gl);
+    render(gl); 
   }
